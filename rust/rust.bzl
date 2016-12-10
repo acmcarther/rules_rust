@@ -308,7 +308,7 @@ def _rust_library_impl(ctx):
       outputs = [rust_lib],
       mnemonic = 'Rustc',
       command = cmd,
-      use_default_shell_env = True,
+      use_default_shell_env = False,
       progress_message = ("Compiling Rust library %s (%d files)"
                           % (ctx.label.name, len(ctx.files.srcs))))
 
@@ -361,7 +361,7 @@ def _rust_binary_impl(ctx):
       outputs = [rust_binary],
       mnemonic = "Rustc",
       command = cmd,
-      use_default_shell_env = True,
+      use_default_shell_env = False,
       progress_message = ("Compiling Rust binary %s (%d files)"
                           % (ctx.label.name, len(ctx.files.srcs))))
 
@@ -423,7 +423,7 @@ def _rust_test_common(ctx, test_binary):
       outputs = [test_binary],
       mnemonic = "RustcTest",
       command = cmd,
-      use_default_shell_env = True,
+      use_default_shell_env = False,
       progress_message = ("Compiling Rust test %s (%d files)"
                           % (ctx.label.name, len(target.srcs))))
 
@@ -531,7 +531,7 @@ def _rust_doc_impl(ctx):
       outputs = [rust_doc_zip],
       mnemonic = "Rustdoc",
       command = doc_cmd,
-      use_default_shell_env = True,
+      use_default_shell_env = False,
       progress_message = ("Generating rustdoc for %s (%d files)"
                           % (target.name, len(target.srcs))))
 
