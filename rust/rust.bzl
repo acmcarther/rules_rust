@@ -35,6 +35,30 @@ CSS_FILETYPE = FileType([".css"])
 
 ZIP_PATH = "/usr/bin/zip"
 
+def _make_sources_hermetic(ctx, root_file):
+  cmd_list = []
+  dir_len = len(root_file.dirname)
+
+  # Generate unique dir to place source files into
+  str_label = ctx.label.workspace_root + "//" + ctx.label.package + ":" + ctx.label.name
+  build_dir = "./" + repr(hash(str_label)) + ".build"
+
+  # Remove prior files (if exist)
+  cmd_list.append("rm -rf " + build_dir + ";")
+
+  for f in ctx.files.srcs:
+    if (not f.dirname.startswith(root_file.dirname)):
+      print("[" + f.path + "] is not accessible from the crate root: [" + root_file.path + "]")
+      print("It will not be included while compiling the target. Build it into a crate and include it as a dep.")
+      continue
+
+    # Copy src files
+    rel_path = f.path[dir_len:]
+    cmd_list.append("mkdir -p $(dirname {1}{2});".format(root_file.dirname, build_dir, rel_path))
+    cmd_list.append("cp {0}{2} {1}{2};".format(root_file.dirname, build_dir, rel_path))
+
+  return struct(src_path = build_dir + "/" + root_file.basename, cmd = cmd_list)
+
 def _path_parts(path):
   """Takes a path and returns a list of its parts with all "." elements removed.
 
@@ -216,14 +240,18 @@ def _build_rustc_command(ctx, crate_name, crate_type, src, output_dir,
   # Construct features flags
   features_flags = _get_features_flags(ctx.attr.crate_features)
 
+  # Generate command to make sources hermetic
+  hermetic_result = _make_sources_hermetic(ctx, src)
+
   return " ".join(
       ["set -e;"] +
+      hermetic_result.cmd +
       depinfo.setup_cmd +
       [
           "LD_LIBRARY_PATH=%s" % toolchain.rustc_lib_path,
           "DYLD_LIBRARY_PATH=%s" % toolchain.rustc_lib_path,
           toolchain.rustc_path,
-          src.path,
+          hermetic_result.src_path,
           "--crate-name %s" % crate_name,
           "--crate-type %s" % crate_type,
           "-C opt-level=3",
@@ -623,7 +651,7 @@ _rust_toolchain_attrs = {
         single_file = True,
     ),
     "_crosstool": attr.label(
-        default = Label("//tools/defaults:crosstool")
+        default = Label("//tools/defaults:crosstool"),
     ),
 }
 
