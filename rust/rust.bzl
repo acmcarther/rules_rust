@@ -46,16 +46,20 @@ def _make_sources_hermetic(ctx, root_file):
   # Remove prior files (if exist)
   cmd_list.append("rm -rf " + build_dir + ";")
 
+  print(root_file.dirname)
   for f in ctx.files.srcs:
     if (not f.dirname.startswith(root_file.dirname)):
-      print("[" + f.path + "] is not accessible from the crate root: [" + root_file.path + "]")
-      print("It will not be included while compiling the target. Build it into a crate and include it as a dep.")
+      print("[" + f.path + "] is not directly accessible from the crate root: [" + root_file.path + "]")
+      #print("It will not be included while compiling the target. Build it into a crate and include it as a dep.")
+      print("It will be lifted into crate root's directory for compilation.")
+      cmd_list.append("mkdir -p $(dirname {0}/{1});".format(build_dir, f.basename))
+      cmd_list.append("cp {0} {1}/{2};".format(f.path, build_dir, f.basename))
       continue
-
-    # Copy src files
-    rel_path = f.path[dir_len:]
-    cmd_list.append("mkdir -p $(dirname {1}{2});".format(root_file.dirname, build_dir, rel_path))
-    cmd_list.append("cp {0}{2} {1}{2};".format(root_file.dirname, build_dir, rel_path))
+    else:
+      # Copy src files
+      rel_path = f.path[dir_len:]
+      cmd_list.append("mkdir -p $(dirname {0}{1});".format(build_dir, rel_path))
+      cmd_list.append("cp {0}{2} {1}{2};".format(root_file.dirname, build_dir, rel_path))
 
   return struct(src_path = build_dir + "/" + root_file.basename, cmd = cmd_list)
 
