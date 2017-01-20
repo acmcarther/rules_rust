@@ -638,7 +638,7 @@ def _rust_library_outputs(name, crate_type):
      }
   elif crate_type == "dylib":
      return {
-         "rust_lib": "lib%{name}.dylib"
+         "rust_lib": "lib%{name}.so"
      }
   elif crate_type == "staticlib":
      return {
