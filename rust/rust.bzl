@@ -257,11 +257,11 @@ def _crate_root_src(ctx, file_names=["lib.rs"]):
 
 def _library_outputs(name, crate_type="rlib"):
   # TODO: OS independent outputs
-  if crate_type == "dylib" || crate_type == "cdylib":
+  if crate_type == "dylib" or crate_type == "cdylib":
     # dylib on OSX
     # dll on windows
     return "lib" + name + ".so"
-  elif crate_type = "staiclib":
+  elif crate_type = "staticlib":
     # lib on windows
     return "lib" + name + ".a"
   elif crate_type = "bin":
