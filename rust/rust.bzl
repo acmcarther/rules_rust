@@ -255,20 +255,6 @@ def _crate_root_src(ctx, file_names=["lib.rs"]):
   else:
     return ctx.file.crate_root
 
-def _library_outputs(name, crate_type="rlib"):
-  # TODO: OS independent outputs
-  if crate_type == "dylib" or crate_type == "cdylib":
-    # dylib on OSX
-    # dll on windows
-    return "lib" + name + ".so"
-  elif crate_type == "staticlib":
-    # lib on windows
-    return "lib" + name + ".a"
-  elif crate_type == "bin":
-    return name
-  else: # "lib", "rlib" and ""
-    return "lib" + name + ".rlib"
-
 def _rust_library_impl(ctx):
   """
   Implementation for rust_library Skylark rule.
@@ -288,7 +274,7 @@ def _rust_library_impl(ctx):
     crate_type += "lib"
 
   # Output library
-  rust_lib = _library_outputs(ctx.label.name, ctx.attr.crate_type)
+  rust_lib = ctx.outputs.rust_lib
   output_dir = rust_lib.dirname
 
   # Dependencies
@@ -649,7 +635,26 @@ rust_library = rule(
     _rust_library_impl,
     attrs = _rust_library_attrs + _rust_toolchain_attrs,
     fragments = ["cpp"],
+    outputs = _rust_library_outputs
 )
+
+def _rust_library_outputs(name, crate_type):
+  if crate_type == "rlib" or crate_type == "lib" or crate_type == "":
+     return {
+         "rust_lib": "lib%{name}.rlib"
+     }
+  elif crate_type == "dylib":
+     return {
+         "rust_lib": "lib%{name}.dylib"
+     }
+  elif crate_type == "staticlib":
+     return {
+         "rust_lib": "lib%{name}.a"
+     }
+  else: # binary?
+     return {
+         "rust_lib": "%{name}"
+     }
 
 rust_binary = rule(
     _rust_binary_impl,
