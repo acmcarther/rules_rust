@@ -631,13 +631,6 @@ _rust_library_attrs = _rust_common_attrs + {
     "crate_type": attr.string(),
 }
 
-rust_library = rule(
-    _rust_library_impl,
-    attrs = _rust_library_attrs + _rust_toolchain_attrs,
-    fragments = ["cpp"],
-    outputs = _rust_library_outputs
-)
-
 def _rust_library_outputs(name, crate_type):
   if crate_type == "rlib" or crate_type == "lib" or crate_type == "":
      return {
@@ -655,6 +648,13 @@ def _rust_library_outputs(name, crate_type):
      return {
          "rust_lib": "%{name}"
      }
+
+rust_library = rule(
+    _rust_library_impl,
+    attrs = _rust_library_attrs + _rust_toolchain_attrs,
+    fragments = ["cpp"],
+    outputs = _rust_library_outputs
+)
 
 rust_binary = rule(
     _rust_binary_impl,
