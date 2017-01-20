@@ -261,10 +261,10 @@ def _library_outputs(name, crate_type="rlib"):
     # dylib on OSX
     # dll on windows
     return "lib" + name + ".so"
-  elif crate_type = "staticlib":
+  elif crate_type == "staticlib":
     # lib on windows
     return "lib" + name + ".a"
-  elif crate_type = "bin":
+  elif crate_type == "bin":
     return name
   else: # "lib", "rlib" and ""
     return "lib" + name + ".rlib"
