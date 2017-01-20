@@ -649,9 +649,6 @@ rust_library = rule(
     _rust_library_impl,
     attrs = _rust_library_attrs + _rust_toolchain_attrs,
     fragments = ["cpp"],
-    outputs = identify_library_outputs {
-        "rust_lib": "lib%{name}.rlib",
-    },
 )
 
 rust_binary = rule(
