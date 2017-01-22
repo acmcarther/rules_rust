@@ -68,6 +68,11 @@ def _relative(src_path, dest_path):
 
   return relative_path
 
+def _hashed_lib_path(lib):
+ hash_value= repr(hash(lib.path))
+ split_basename = lib.basename.split('.', 2)
+ return split_basename[0] + '-' + hash_value + '.' + split_basename[1]
+
 def _create_setup_cmd(lib, deps_dir, in_runfiles):
   """
   Helper function to construct a command for symlinking a library into the
@@ -76,7 +81,7 @@ def _create_setup_cmd(lib, deps_dir, in_runfiles):
   lib_path = lib.short_path if in_runfiles else lib.path
   return (
       "ln -sf " + _relative(deps_dir, lib_path) + " " +
-      deps_dir + "/" + repr(hash(lib.path)) + lib.basename + "\n"
+      deps_dir + "/" + _hashed_lib_path(lib) + "\n"
   )
 
 def _setup_deps(deps, name, working_dir, is_library=False, in_runfiles=False):
@@ -120,7 +125,7 @@ def _setup_deps(deps, name, working_dir, is_library=False, in_runfiles=False):
       symlinked_libs += [dep.rust_lib] + dep.transitive_libs
       link_flags += [(
           "--extern " + dep.label.name + "=" +
-          deps_dir + "/" + repr(hash(dep.rust_lib.path)) + dep.rust_lib.basename
+          deps_dir + "/" + _hashed_lib_path(dep.rust_lib)
       )]
       has_rlib = True
 
