@@ -76,7 +76,7 @@ def _create_setup_cmd(lib, deps_dir, in_runfiles):
   lib_path = lib.short_path if in_runfiles else lib.path
   return (
       "ln -sf " + _relative(deps_dir, lib_path) + " " +
-      deps_dir + "/" repr(hash(lib.path)) + lib.basename + "\n"
+      deps_dir + "/" + repr(hash(lib.path)) + lib.basename + "\n"
   )
 
 def _setup_deps(deps, name, working_dir, is_library=False, in_runfiles=False):
