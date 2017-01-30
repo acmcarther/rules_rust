@@ -68,6 +68,11 @@ def _relative(src_path, dest_path):
 
   return relative_path
 
+def _hashed_lib_path(lib):
+ hash_value= repr(hash(lib.path))
+ split_basename = lib.basename.split('.', 2)
+ return split_basename[0] + '-' + hash_value + '.' + split_basename[1]
+
 def _create_setup_cmd(lib, deps_dir, in_runfiles):
   """
   Helper function to construct a command for symlinking a library into the
@@ -76,7 +81,7 @@ def _create_setup_cmd(lib, deps_dir, in_runfiles):
   lib_path = lib.short_path if in_runfiles else lib.path
   return (
       "ln -sf " + _relative(deps_dir, lib_path) + " " +
-      deps_dir + "/" + lib.basename + "\n"
+      deps_dir + "/" + _hashed_lib_path(lib) + "\n"
   )
 
 def _setup_deps(deps, name, working_dir, is_library=False, in_runfiles=False):
@@ -120,7 +125,7 @@ def _setup_deps(deps, name, working_dir, is_library=False, in_runfiles=False):
       symlinked_libs += [dep.rust_lib] + dep.transitive_libs
       link_flags += [(
           "--extern " + dep.label.name + "=" +
-          deps_dir + "/" + dep.rust_lib.basename
+          deps_dir + "/" + _hashed_lib_path(dep.rust_lib)
       )]
       has_rlib = True
 
@@ -227,6 +232,7 @@ def _build_rustc_command(ctx, crate_name, crate_type, src, output_dir,
           "--crate-name %s" % crate_name,
           "--crate-type %s" % crate_type,
           "-C opt-level=3",
+          "-C metadata=%s" % repr(hash(src.path)),
           "--codegen ar=%s" % ar,
           "--codegen linker=%s" % cc,
           "--codegen link-args='%s'" % ' '.join(cpp_fragment.link_options),
@@ -631,13 +637,29 @@ _rust_library_attrs = _rust_common_attrs + {
     "crate_type": attr.string(),
 }
 
+def _rust_library_outputs(name, crate_type):
+  if crate_type == "rlib" or crate_type == "lib" or crate_type == "":
+     return {
+         "rust_lib": "lib%{name}.rlib"
+     }
+  elif crate_type == "dylib":
+     return {
+         "rust_lib": "lib%{name}.so"
+     }
+  elif crate_type == "staticlib":
+     return {
+         "rust_lib": "lib%{name}.a"
+     }
+  else: # binary?
+     return {
+         "rust_lib": "%{name}"
+     }
+
 rust_library = rule(
     _rust_library_impl,
     attrs = _rust_library_attrs + _rust_toolchain_attrs,
     fragments = ["cpp"],
-    outputs = {
-        "rust_lib": "lib%{name}.rlib",
-    },
+    outputs = _rust_library_outputs
 )
 
 rust_binary = rule(
