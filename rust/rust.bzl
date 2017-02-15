@@ -225,8 +225,8 @@ def _build_rustc_command(ctx, crate_name, crate_type, src, output_dir,
       ["set -e;"] +
       depinfo.setup_cmd +
       [
-          "LD_LIBRARY_PATH=%s" % toolchain.rustc_lib_path,
-          "DYLD_LIBRARY_PATH=%s" % toolchain.rustc_lib_path,
+          "LD_LIBRARY_PATH=\"$LD_LIBRARY_PATH:%s\"" % toolchain.rustc_lib_path,
+          "DYLD_LIBRARY_PATH=\"$DYLD_LIBRARY_PATH:%s\"" % toolchain.rustc_lib_path,
           toolchain.rustc_path,
           src.path,
           "--crate-name %s" % crate_name,
