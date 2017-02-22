@@ -11,6 +11,7 @@ load(
 
 rust_library(
     name = "fibonacci",
+    crate_type = "dylib",
     srcs = ["src/lib.rs"],
 )
 
