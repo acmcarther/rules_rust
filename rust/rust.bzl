@@ -221,7 +221,9 @@ def _get_features_flags(features):
   return features_flags
 
 def _get_crate_type_and_target_outputs(name, crate_type, platform):
-  extension = LIBRARY_AND_PLATFORM_TO_EXTENSION[crate_type or "rlib", platform or "linux"]
+  crate_type = crate_type or "rlib"
+  platform = platform or "linux"
+  extension = LIBRARY_AND_PLATFORM_TO_EXTENSION[crate_type, platform]
 
   if crate_type == "bin":
     return {
