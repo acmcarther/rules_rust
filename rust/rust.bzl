@@ -114,6 +114,17 @@ def _create_setup_cmd(lib, deps_dir, in_runfiles):
       deps_dir + "/" + lib.basename + "\n"
   )
 
+
+def _out_dir_setup_cmd(out_dir_tar):
+  if out_dir_tar:
+    return [
+        "mkdir ./out_dir/\n",
+        "tar -xzf %s -C ./out_dir\n" % out_dir_tar.path,
+    ]
+  else:
+     return []
+
+
 def _setup_deps(deps, name, working_dir, allow_cc_deps=False,
                 in_runfiles=False):
   """
@@ -255,9 +266,11 @@ def _build_rustc_command(ctx, crate_name, crate_type, src, output_dir,
   return " ".join(
       ["set -e;"] +
       depinfo.setup_cmd +
+      _out_dir_setup_cmd(ctx.file.out_dir_tar) +
       [
           "LD_LIBRARY_PATH=%s" % toolchain.rustc_lib_path,
           "DYLD_LIBRARY_PATH=%s" % toolchain.rustc_lib_path,
+          "OUT_DIR=$(pwd)/out_dir",
           toolchain.rustc_path,
           src.path,
           "--crate-name %s" % crate_name,
@@ -339,6 +352,9 @@ def _rust_library_impl(ctx):
       ctx.files._rust_lib +
       ctx.files._crosstool)
 
+  if ctx.file.out_dir_tar:
+    compile_inputs = compile_inputs + [ctx.file.out_dir_tar]
+
   ctx.action(
       inputs = compile_inputs,
       outputs = [rust_lib],
@@ -391,6 +407,9 @@ def _rust_binary_impl(ctx):
       ctx.files._rustc_lib +
       ctx.files._rust_lib +
       ctx.files._crosstool)
+
+  if ctx.file.out_dir_tar:
+    compile_inputs = compile_inputs + [ctx.file.out_dir_tar]
 
   ctx.action(
       inputs = compile_inputs,
@@ -454,6 +473,9 @@ def _rust_test_common(ctx, test_binary):
                     ctx.files._rust_lib +
                     ctx.files._crosstool)
 
+  if ctx.file.out_dir_tar:
+    compile_inputs = compile_inputs + [ctx.file.out_dir_tar]
+
   ctx.action(
       inputs = compile_inputs,
       outputs = [test_binary],
@@ -479,7 +501,7 @@ def _rust_bench_test_impl(ctx):
   ctx.file_action(
       output = rust_bench_test,
       content = " ".join([
-          "#!/bin/bash\n",
+          "#!/usr/bin/env bash\n",
           "set -e\n",
           "%s --bench\n" % test_binary.short_path]),
       executable = True)
@@ -530,11 +552,13 @@ def _rust_doc_impl(ctx):
   docs_dir = rust_doc_zip.dirname + "/_rust_docs"
   doc_cmd = " ".join(
       ["set -e;"] +
-      depinfo.setup_cmd + [
+      depinfo.setup_cmd +
+      _out_dir_setup_cmd(ctx.file.out_dir_tar) + [
           "rm -rf %s;" % docs_dir,
           "mkdir %s;" % docs_dir,
           "LD_LIBRARY_PATH=%s" % toolchain.rustc_lib_path,
           "DYLD_LIBRARY_PATH=%s" % toolchain.rustc_lib_path,
+          "OUT_DIR=$(pwd)/out_dir",
           toolchain.rustdoc_path,
           lib_rs.path,
           "--crate-name %s" % target.name,
@@ -593,16 +617,19 @@ def _rust_doc_test_impl(ctx):
                         allow_cc_deps=False,
                         in_runfiles=True)
 
+
   # Construct rustdoc test command, which will be written to a shell script
   # to be executed to run the test.
   toolchain = _rust_toolchain(ctx)
   doc_test_cmd = " ".join(
-      ["#!/bin/bash\n"] +
+      ["#!/usr/bin/env bash\n"] +
       ["set -e\n"] +
       depinfo.setup_cmd +
+      _out_dir_setup_cmd(ctx.file.out_dir_tar) +
       [
           "LD_LIBRARY_PATH=%s" % toolchain.rustc_lib_short_path,
           "DYLD_LIBRARY_PATH=%s" % toolchain.rustc_lib_short_path,
+          "OUT_DIR=$(pwd)/out_dir",
           toolchain.rustdoc_short_path,
           "-L all=%s" % toolchain.rust_lib_short_path,
           lib_rs.path,
@@ -637,6 +664,7 @@ _rust_common_attrs = {
     "deps": attr.label_list(),
     "crate_features": attr.string_list(),
     "rustc_flags": attr.string_list(),
+    "out_dir_tar": attr.label(allow_files = [".tar", ".tar.gz"], single_file = True),
 }
 
 _rust_toolchain_attrs = {
