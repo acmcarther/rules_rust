@@ -216,8 +216,6 @@ def _setup_deps(ctx, deps, name, working_dir, allow_cc_deps=False,
     ]
     env_vars += ["OUT_DIR=$PWD/%s" % gen_out_dir]
 
-  print("hello")
-  print(env_vars)
   return struct(
       libs = list(libs),
       transitive_libs = list(transitive_libs),
