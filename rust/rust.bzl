@@ -126,19 +126,9 @@ def _create_setup_cmd(lib, deps_dir, in_runfiles, hash_path=True):
       deps_dir + "/" + destination_path + "\n"
   )
 
-
-def _out_dir_setup_cmd(out_dir_tar):
-  if out_dir_tar:
-    return [
-        "mkdir ./out_dir/\n",
-        "tar -xzf %s -C ./out_dir\n" % out_dir_tar.path,
-    ]
-  else:
-     return []
-
-
-def _setup_deps(deps, name, working_dir, allow_cc_deps=False,
-                in_runfiles=False):
+def _setup_deps(ctx, deps, name, working_dir, allow_cc_deps=False,
+                in_runfiles=False,
+                out_dir_tar=None):
   """
   Walks through dependencies and constructs the necessary commands for linking
   to all the necessary dependencies.
@@ -152,6 +142,8 @@ def _setup_deps(deps, name, working_dir, allow_cc_deps=False,
     in_runfiles: True if the setup commands will be run in a .runfiles
         directory. In this case, the working dir should be '.', and the deps
         will be symlinked into the .deps dir from the runfiles tree.
+    out_dir_tar: a File pointing to a tar archive containing any files that should
+        be unpacked and passed to rustc as OUT_DIR.
 
   Returns:
     Returns a struct containing the following fields:
@@ -160,9 +152,11 @@ def _setup_deps(deps, name, working_dir, allow_cc_deps=False,
       setup_cmd:
       search_flags:
       link_flags:
+      env_vars:
   """
   deps_dir = working_dir + "/" + name + ".deps"
   setup_cmd = ["rm -rf " + deps_dir + "; mkdir " + deps_dir + "\n"]
+  env_vars = []
 
   has_rlib = False
   has_native = False
@@ -213,12 +207,23 @@ def _setup_deps(deps, name, working_dir, allow_cc_deps=False,
   if has_native:
     search_flags += ["-L native=%s" % deps_dir]
 
+  if out_dir_tar:
+    gen_out_dir = ctx.genfiles_dir.path + "/" + out_dir_tar.dirname  + "/" + name + "_UNPACKED"
+    setup_cmd += [
+      "mkdir -p %s\n" % gen_out_dir,
+      "tar -xzf %s -C %s\n" % (out_dir_tar.path, gen_out_dir)
+    ]
+    env_vars += ["OUT_DIR=$PWD/%s" % gen_out_dir]
+
+  print("hello")
+  print(env_vars)
   return struct(
       libs = list(libs),
       transitive_libs = list(transitive_libs),
       setup_cmd = setup_cmd,
       search_flags = search_flags,
-      link_flags = link_flags)
+      link_flags = link_flags,
+      env_vars = env_vars)
 
 def _get_features_flags(features):
   """
@@ -282,11 +287,10 @@ def _build_rustc_command(ctx, crate_name, crate_type, src, output_dir,
   return " ".join(
       ["set -e;"] +
       depinfo.setup_cmd +
-      _out_dir_setup_cmd(ctx.file.out_dir_tar) +
       [
           "LD_LIBRARY_PATH=%s" % toolchain.rustc_lib_path,
           "DYLD_LIBRARY_PATH=%s" % toolchain.rustc_lib_path,
-          "OUT_DIR=$(pwd)/out_dir",
+          " ".join(depinfo.env_vars),
           toolchain.rustc_path,
           src.path,
           "--crate-name %s" % crate_name,
@@ -344,10 +348,12 @@ def _rust_library_impl(ctx):
   output_dir = rust_lib.dirname
 
   # Dependencies
-  depinfo = _setup_deps(ctx.attr.deps,
+  depinfo = _setup_deps(ctx,
+                        ctx.attr.deps,
                         ctx.label.name,
                         output_dir,
-                        allow_cc_deps=True)
+                        allow_cc_deps=True,
+                        out_dir_tar=ctx.file.out_dir_tar)
 
   # Build rustc command
   cmd = _build_rustc_command(
@@ -401,10 +407,12 @@ def _rust_binary_impl(ctx):
   output_dir = rust_binary.dirname
 
   # Dependencies
-  depinfo = _setup_deps(ctx.attr.deps,
+  depinfo = _setup_deps(ctx,
+                        ctx.attr.deps,
                         ctx.label.name,
                         output_dir,
-                        allow_cc_deps=False)
+                        allow_cc_deps=False,
+                        out_dir_tar=ctx.file.out_dir_tar)
 
   # Build rustc command.
   cmd = _build_rustc_command(ctx = ctx,
@@ -469,10 +477,12 @@ def _rust_test_common(ctx, test_binary):
                     crate_type = "lib")
 
   # Get information about dependencies
-  depinfo = _setup_deps(target.deps,
+  depinfo = _setup_deps(ctx,
+                        target.deps,
                         target.name,
                         output_dir,
-                        allow_cc_deps=True)
+                        allow_cc_deps=True,
+                        out_dir_tar=ctx.file.out_dir_tar)
 
   cmd = _build_rustc_command(ctx = ctx,
                              crate_name = test_binary.basename,
@@ -556,10 +566,12 @@ def _rust_doc_impl(ctx):
 
   # Get information about dependencies
   output_dir = rust_doc_zip.dirname
-  depinfo = _setup_deps(target.deps,
+  depinfo = _setup_deps(ctx,
+                        target.deps,
                         target.name,
                         output_dir,
-                        allow_cc_deps=False)
+                        allow_cc_deps=False,
+                        out_dir_tar=ctx.file.out_dir_tar)
 
   # Rustdoc flags.
   doc_flags = _build_rustdoc_flags(ctx)
@@ -569,13 +581,12 @@ def _rust_doc_impl(ctx):
   docs_dir = rust_doc_zip.dirname + "/_rust_docs"
   doc_cmd = " ".join(
       ["set -e;"] +
-      depinfo.setup_cmd +
-      _out_dir_setup_cmd(ctx.file.out_dir_tar) + [
+      depinfo.setup_cmd + [
           "rm -rf %s;" % docs_dir,
           "mkdir %s;" % docs_dir,
           "LD_LIBRARY_PATH=%s" % toolchain.rustc_lib_path,
           "DYLD_LIBRARY_PATH=%s" % toolchain.rustc_lib_path,
-          "OUT_DIR=$(pwd)/out_dir",
+          " ".join(depinfo.env_vars),
           toolchain.rustdoc_path,
           lib_rs.path,
           "--crate-name %s" % target.name,
@@ -628,11 +639,13 @@ def _rust_doc_test_impl(ctx):
 
   # Get information about dependencies
   output_dir = rust_doc_test.dirname
-  depinfo = _setup_deps(target.deps,
+  depinfo = _setup_deps(ctx,
+                        target.deps,
                         target.name,
                         working_dir=".",
                         allow_cc_deps=False,
-                        in_runfiles=True)
+                        in_runfiles=True,
+                        out_dir_tar=ctx.file.out_dir_tar)
 
 
   # Construct rustdoc test command, which will be written to a shell script
@@ -642,11 +655,10 @@ def _rust_doc_test_impl(ctx):
       ["#!/usr/bin/env bash\n"] +
       ["set -e\n"] +
       depinfo.setup_cmd +
-      _out_dir_setup_cmd(ctx.file.out_dir_tar) +
       [
           "LD_LIBRARY_PATH=%s" % toolchain.rustc_lib_short_path,
           "DYLD_LIBRARY_PATH=%s" % toolchain.rustc_lib_short_path,
-          "OUT_DIR=$(pwd)/out_dir",
+          " ".join(depinfo.env_vars),
           toolchain.rustdoc_short_path,
           "-L all=%s" % toolchain.rust_lib_short_path,
           lib_rs.path,
