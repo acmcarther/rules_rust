@@ -210,6 +210,7 @@ def _setup_deps(ctx, deps, name, working_dir, allow_cc_deps=False,
   if out_dir_tar:
     gen_out_dir = ctx.genfiles_dir.path + "/" + out_dir_tar.dirname  + "/" + name + "_UNPACKED"
     setup_cmd += [
+      "rm -rf %s\n" % gen_out_dir,
       "mkdir -p %s\n" % gen_out_dir,
       "tar -xzf %s -C %s\n" % (out_dir_tar.path, gen_out_dir)
     ]
