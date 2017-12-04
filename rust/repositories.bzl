@@ -68,9 +68,9 @@ filegroup(
 def rust_repositories():
   native.new_http_archive(
       name = "rust_linux_x86_64",
-      url = "https://static.rust-lang.org/dist/rust-1.18.0-x86_64-unknown-linux-gnu.tar.gz",
-      strip_prefix = "rust-1.18.0-x86_64-unknown-linux-gnu",
-      sha256 = "abdc9f37870c979dd241ba8c7c06d8bb99696292c462ed852c0af7f988bb5887",
+      url = "https://static.rust-lang.org/dist/2017-12-01/rust-nightly-x86_64-unknown-linux-gnu.tar.gz",
+      strip_prefix = "rust-nightly-x86_64-unknown-linux-gnu",
+      sha256 = "65e4c81935d763ba390eb2acc1ecc5e3ca91b1c032c3ca76e9b20ccc1a667300",
       build_file_content = RUST_LINUX_BUILD_FILE,
   )
 
