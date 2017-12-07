@@ -61,6 +61,30 @@ LIBRARY_CRATE_TYPES = [
     "staticlib",
 ]
 
+LIBRARY_AND_PLATFORM_TO_EXTENSION = {
+    ("proc-macro", "linux"): ".so",
+    ("proc-macro", "darwin"): ".dylib",
+    ("proc-macro", "windows"): ".dll",
+    ("dylib", "linux"): ".so",
+    ("dylib", "darwin"): ".dylib",
+    ("dylib", "windows"): ".dll",
+    ("cdylib", "linux"): ".so",
+    ("cdylib", "darwin"): ".dylib",
+    ("cdylib", "windows"): ".dll",
+    ("staticlib", "linux"): ".a",
+    ("staticlib", "darwin"): ".a",
+    ("staticlib", "windows"): ".lib",
+    ("bin", "linux"): "",
+    ("bin", "darwin"): "",
+    ("bin", "windows"): ".exe",
+    ("lib", "linux"): ".rlib",
+    ("lib", "darwin"): ".rlib",
+    ("lib", "windows"): ".rlib",
+    ("rlib", "linux"): ".rlib",
+    ("rlib", "darwin"): ".rlib",
+    ("rlib", "windows"): ".rlib",
+}
+
 # Used by rust_doc
 HTML_MD_FILETYPE = FileType([
     ".html",
@@ -237,6 +261,20 @@ def _get_features_flags(features):
 
 def _get_dirname(short_path):
   return short_path[0:short_path.rfind('/')]
+
+def _get_crate_type_and_target_outputs(name, crate_type, platform):
+  crate_type = crate_type or "rlib"
+  platform = platform or "linux"
+  extension = LIBRARY_AND_PLATFORM_TO_EXTENSION[crate_type, platform]
+
+  if crate_type == "bin":
+    return {
+        "rust_lib": "%{{name}}{}".format(extension)
+    }
+  else:
+    return {
+        "rust_lib": "lib%{{name}}{}".format(extension)
+    }
 
 def _rust_toolchain(ctx):
   return struct(
@@ -728,6 +766,7 @@ _rust_toolchain_attrs = {
 
 _rust_library_attrs = {
     "crate_type": attr.string(),
+    "platform": attr.string(),
 }
 
 rust_library = rule(
@@ -736,9 +775,7 @@ rust_library = rule(
                  _rust_library_attrs.items() +
                  _rust_toolchain_attrs.items()),
     fragments = ["cpp"],
-    outputs = {
-        "rust_lib": "lib%{name}.rlib",
-    },
+    outputs = _get_crate_type_and_target_outputs,
 )
 
 """Builds a Rust library crate.
