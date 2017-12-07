@@ -55,6 +55,7 @@ A_FILETYPE = FileType([".a"])
 
 LIBRARY_CRATE_TYPES = [
     "lib",
+    "proc-macro",
     "rlib",
     "dylib",
     "staticlib",
@@ -692,7 +693,13 @@ _rust_common_attrs = {
     "deps": attr.label_list(),
     "crate_features": attr.string_list(),
     "rustc_flags": attr.string_list(),
-    "out_dir_tar": attr.label(allow_files = [".tar", ".tar.gz"], single_file = True),
+    "out_dir_tar": attr.label(
+        allow_files = [
+            ".tar",
+            ".tar.gz",
+        ],
+        single_file = True,
+    ),
 }
 
 _rust_toolchain_attrs = {
@@ -715,7 +722,7 @@ _rust_toolchain_attrs = {
         single_file = True,
     ),
     "_crosstool": attr.label(
-        default = Label("//tools/defaults:crosstool")
+        default = Label("//tools/defaults:crosstool"),
     ),
 }
 
@@ -733,6 +740,7 @@ rust_library = rule(
         "rust_lib": "lib%{name}.rlib",
     },
 )
+
 """Builds a Rust library crate.
 
 Args:
@@ -837,6 +845,7 @@ rust_binary = rule(
     executable = True,
     fragments = ["cpp"],
 )
+
 """Builds a Rust binary crate.
 
 Args:
@@ -961,6 +970,7 @@ rust_test = rule(
     fragments = ["cpp"],
     test = True,
 )
+
 """Builds a Rust test crate.
 
 Args:
@@ -1123,6 +1133,7 @@ rust_bench_test = rule(
     fragments = ["cpp"],
     test = True,
 )
+
 """Builds a Rust benchmark test.
 
 **Warning**: This rule is currently experimental. [Rust Benchmark
@@ -1256,6 +1267,7 @@ rust_doc = rule(
         "rust_doc_zip": "%{name}-docs.zip",
     },
 )
+
 """Generates code documentation.
 
 Args:
@@ -1314,6 +1326,7 @@ rust_doc_test = rule(
     executable = True,
     test = True,
 )
+
 """Runs Rust documentation tests.
 
 Args:
