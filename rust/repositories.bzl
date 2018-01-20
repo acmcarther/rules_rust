@@ -120,9 +120,9 @@ rust_toolchain(
 def rust_repositories():
   native.new_http_archive(
       name = "rust_linux_x86_64",
-      url = "https://static.rust-lang.org/dist/rust-1.20.0-x86_64-unknown-linux-gnu.tar.gz",
-      strip_prefix = "rust-1.20.0-x86_64-unknown-linux-gnu",
-      sha256 = "ca1cf3aed73ff03d065a7d3e57ecca92228d35dc36d9274a6597441319f18eb8",
+      url = "https://static.rust-lang.org/dist/2018-01-15/rust-nightly-x86_64-unknown-linux-gnu.tar.gz",
+      strip_prefix = "rust-nightly-x86_64-unknown-linux-gnu",
+      sha256 = "fc354360e0e6a4fbc171b7a6678e37e55b447775c9e0f1eb37e0aca61efaa949",
       build_file_content = RUST_LINUX_BUILD_FILE,
   )
 
