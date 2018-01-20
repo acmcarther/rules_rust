@@ -49,9 +49,12 @@ rust_repositories()
   [Cargo](https://crates.io/).
 """
 
+load(":toolchain.bzl", "build_rustc_command", "build_rustdoc_command", "build_rustdoc_test_command", "relative_path")
+
 RUST_FILETYPE = FileType([".rs"])
 
 A_FILETYPE = FileType([".a"])
+SO_FILETYPE = FileType([".so"])
 
 LIBRARY_CRATE_TYPES = [
     "lib",
@@ -93,40 +96,10 @@ HTML_MD_FILETYPE = FileType([
 
 CSS_FILETYPE = FileType([".css"])
 
-ZIP_PATH = "/usr/bin/zip"
-
-def _path_parts(path):
-  """Takes a path and returns a list of its parts with all "." elements removed.
-
-  The main use case of this function is if one of the inputs to _relative()
-  is a relative path, such as "./foo".
-
-  Args:
-    path_parts: A list containing parts of a path.
-
-  Returns:
-    Returns a list containing the path parts with all "." elements removed.
-  """
-  path_parts = path.split("/")
-  return [part for part in path_parts if part != "."]
-
-def _relative(src_path, dest_path):
-  """Returns the relative path from src_path to dest_path."""
-  src_parts = _path_parts(src_path)
-  dest_parts = _path_parts(dest_path)
-  n = 0
-  done = False
-  for src_part, dest_part in zip(src_parts, dest_parts):
-    if src_part != dest_part:
-      break
-    n += 1
-
-  relative_path = ""
-  for i in range(n, len(src_parts)):
-    relative_path += "../"
-  relative_path += "/".join(dest_parts[n:])
-
-  return relative_path
+def _get_lib_name(lib):
+  """ Returns the name of a library artifact, eg. libabc.a -> abc"""
+  libname, ext = lib.basename.split(".", 2)
+  return libname[3:]
 
 def _hashed_lib_path(lib):
   """Generates a hashed path for an rlib"""
@@ -147,7 +120,7 @@ def _create_setup_cmd(lib, deps_dir, in_runfiles, hash_path=True):
   if hash_path:
     destination_path = _hashed_lib_path(lib)
   return (
-      "ln -sf " + _relative(deps_dir, lib_path) + " " +
+      "ln -sf " + relative_path(deps_dir, lib_path) + " " +
       deps_dir + "/" + destination_path + "\n"
   )
 
@@ -174,6 +147,7 @@ def _setup_deps(ctx, deps, name, working_dir, allow_cc_deps=False,
     Returns a struct containing the following fields:
       libs:
       transitive_libs:
+      transitive_dylibs:
       setup_cmd:
       search_flags:
       link_flags:
@@ -184,12 +158,16 @@ def _setup_deps(ctx, deps, name, working_dir, allow_cc_deps=False,
   env_vars = []
 
   has_rlib = False
-  has_native = False
 
-  libs = set()
-  transitive_libs = set()
-  symlinked_libs = set()
-  unique_symlinked_libs = set()
+  libs = depset()
+  transitive_libs = depset()
+  transitive_dylibs = depset(order="topological") # Dylib link flag ordering matters.
+  transitive_staticlibs = depset()
+
+  # We can have multiple versions of rlibs, but not native libs.
+  symlinked_libs = depset()
+  unique_symlinked_libs = depset()
+
   link_flags = []
   for dep in deps:
     if hasattr(dep, "rust_lib"):
@@ -203,23 +181,36 @@ def _setup_deps(ctx, deps, name, working_dir, allow_cc_deps=False,
       )]
       has_rlib = True
 
+      transitive_dylibs += dep.transitive_dylibs
+      transitive_staticlibs += A_FILETYPE.filter(dep.transitive_libs)
+      
+      # @TODO Remove these from symlinked_libs on L152.
+      unique_symlinked_libs += dep.transitive_dylibs + A_FILETYPE.filter(dep.transitive_libs)
+
     elif hasattr(dep, "cc"):
+      # This dependency is a cc_library
       if not allow_cc_deps:
         fail("Only rust_library, rust_binary, and rust_test targets can " +
              "depend on cc_library")
 
-      # This dependency is a cc_library
-      native_libs = A_FILETYPE.filter(dep.cc.libs)
-      libs += native_libs
-      transitive_libs += native_libs
-      unique_symlinked_libs += native_libs
-      link_flags += ["-l static=" + dep.label.name]
-      has_native = True
+      static_libs = A_FILETYPE.filter(dep.cc.libs)
+      dynamic_libs = SO_FILETYPE.filter(dep.cc.libs)
+
+      libs += static_libs + dynamic_libs
+      transitive_libs += static_libs + dynamic_libs
+      unique_symlinked_libs += static_libs + dynamic_libs
+
+      transitive_dylibs += dynamic_libs
+      transitive_staticlibs += static_libs
 
     else:
       fail("rust_library, rust_binary and rust_test targets can only depend " +
            "on rust_library or cc_library targets.")
 
+  link_flags += ["-l static=" + _get_lib_name(lib) for lib in transitive_staticlibs.to_list()]
+  link_flags += ["-l dylib=" + _get_lib_name(lib) for lib in transitive_dylibs.to_list()]
+
+  # Create symlinks to all transitive libs in our deps_dir.
   for symlinked_lib in symlinked_libs:
     setup_cmd += [_create_setup_cmd(symlinked_lib, deps_dir, in_runfiles)]
 
@@ -229,7 +220,7 @@ def _setup_deps(ctx, deps, name, working_dir, allow_cc_deps=False,
   search_flags = []
   if has_rlib:
     search_flags += ["-L dependency=%s" % deps_dir]
-  if has_native:
+  if transitive_dylibs or transitive_staticlibs:
     search_flags += ["-L native=%s" % deps_dir]
 
   if out_dir_tar:
@@ -244,23 +235,11 @@ def _setup_deps(ctx, deps, name, working_dir, allow_cc_deps=False,
   return struct(
       libs = list(libs),
       transitive_libs = list(transitive_libs),
+      transitive_dylibs = transitive_dylibs,
       setup_cmd = setup_cmd,
       search_flags = search_flags,
       link_flags = link_flags,
       env_vars = env_vars)
-
-def _get_features_flags(features):
-  """
-  Constructs a string containing the feature flags from the features specified
-  in the features attribute.
-  """
-  features_flags = []
-  for feature in features:
-    features_flags += ["--cfg feature=\\\"%s\\\"" % feature]
-  return features_flags
-
-def _get_dirname(short_path):
-  return short_path[0:short_path.rfind('/')]
 
 def _get_crate_type_and_target_outputs(name, crate_type, platform):
   crate_type = crate_type or "rlib"
@@ -276,77 +255,8 @@ def _get_crate_type_and_target_outputs(name, crate_type, platform):
         "rust_lib": "lib%{{name}}{}".format(extension)
     }
 
-def _rust_toolchain(ctx):
-  return struct(
-      rustc_path = ctx.file._rustc.path,
-      rustc_lib_path = ctx.files._rustc_lib[0].dirname,
-      rustc_lib_short_path = _get_dirname(ctx.files._rustc_lib[0].short_path),
-      rust_lib_path = ctx.files._rust_lib[0].dirname,
-      rust_lib_short_path = _get_dirname(ctx.files._rust_lib[0].short_path),
-      rustdoc_path = ctx.file._rustdoc.path,
-      rustdoc_short_path = ctx.file._rustdoc.short_path)
-
-def _build_rustc_command(ctx, crate_name, crate_type, src, output_dir,
-                         depinfo, rust_flags=[]):
-  """Builds the rustc command.
-
-  Constructs the rustc command used to build the current target.
-
-  Args:
-    ctx: The ctx object for the current target.
-    crate_type: The type of crate to build ("lib" or "bin")
-    src: The File object for crate root source file ("lib.rs" or "main.rs")
-    output_dir: The output directory for the target.
-    depinfo: Struct containing information about dependencies as returned by
-        _setup_deps
-
-  Return:
-    String containing the rustc command.
-  """
-
-  # Paths to the Rust compiler and standard libraries.
-  toolchain = _rust_toolchain(ctx)
-
-  # Paths to cc (for linker) and ar
-  cpp_fragment = ctx.fragments.cpp
-  cc = cpp_fragment.compiler_executable
-  ar = cpp_fragment.ar_executable
-  # Currently, the CROSSTOOL config for darwin sets ar to "libtool". Because
-  # rust uses ar-specific flags, use /usr/bin/ar in this case.
-  # TODO(dzc): This is not ideal. Remove this workaround once ar_executable
-  # always points to an ar binary.
-  ar_str = "%s" % ar
-  if ar_str.find("libtool", 0) != -1:
-    ar = "/usr/bin/ar"
-
-  # Construct features flags
-  features_flags = _get_features_flags(ctx.attr.crate_features)
-
-  return " ".join(
-      ["set -e;"] +
-      depinfo.setup_cmd +
-      [
-          "LD_LIBRARY_PATH=%s" % toolchain.rustc_lib_path,
-          "DYLD_LIBRARY_PATH=%s" % toolchain.rustc_lib_path,
-          " ".join(depinfo.env_vars),
-          toolchain.rustc_path,
-          src.path,
-          "--crate-name %s" % crate_name,
-          "--crate-type %s" % crate_type,
-          "-C opt-level=3",
-          "-C metadata=%s" % repr(hash(src.path)),
-          "--codegen ar=%s" % ar,
-          "--codegen linker=%s" % cc,
-          "--codegen link-args='%s'" % ' '.join(cpp_fragment.link_options),
-          "-L all=%s" % toolchain.rust_lib_path,
-          "--out-dir %s" % output_dir,
-          "--emit=dep-info,link",
-      ] +
-      features_flags +
-      rust_flags +
-      depinfo.search_flags +
-      depinfo.link_flags +
-      ctx.attr.rustc_flags)
+def _find_toolchain(ctx):
+  return ctx.toolchains["@io_bazel_rules_rust//rust:toolchain"]
 
 def _find_crate_root_src(srcs, file_names=["lib.rs"]):
   """Finds the source file for the crate root."""
@@ -394,8 +304,10 @@ def _rust_library_impl(ctx):
                         out_dir_tar=ctx.file.out_dir_tar)
 
   # Build rustc command
-  cmd = _build_rustc_command(
+  toolchain = _find_toolchain(ctx)
+  cmd = build_rustc_command(
       ctx = ctx,
+      toolchain = toolchain,
       crate_name = ctx.label.name,
       crate_type = crate_type,
       src = lib_rs,
@@ -408,10 +320,10 @@ def _rust_library_impl(ctx):
       ctx.files.data +
       depinfo.libs +
       depinfo.transitive_libs +
-      [ctx.file._rustc] +
-      ctx.files._rustc_lib +
-      ctx.files._rust_lib +
-      ctx.files._crosstool)
+      [toolchain.rustc] +
+      toolchain.rustc_lib +
+      toolchain.rust_lib +
+      toolchain.crosstool_files)
 
   if ctx.file.out_dir_tar:
     compile_inputs = compile_inputs + [ctx.file.out_dir_tar]
@@ -426,12 +338,13 @@ def _rust_library_impl(ctx):
                           % (ctx.label.name, len(ctx.files.srcs))))
 
   return struct(
-      files = set([rust_lib]),
+      files = depset([rust_lib]),
       crate_type = crate_type,
       crate_root = lib_rs,
       rust_srcs = ctx.files.srcs,
       rust_deps = ctx.attr.deps,
       transitive_libs = depinfo.transitive_libs,
+      transitive_dylibs = depinfo.transitive_dylibs,
       rust_lib = rust_lib)
 
 def _rust_binary_impl(ctx):
@@ -453,7 +366,9 @@ def _rust_binary_impl(ctx):
                         out_dir_tar=ctx.file.out_dir_tar)
 
   # Build rustc command.
-  cmd = _build_rustc_command(ctx = ctx,
+  toolchain = _find_toolchain(ctx)
+  cmd = build_rustc_command(ctx = ctx,
+                             toolchain = toolchain,
                              crate_name = ctx.label.name,
                              crate_type = "bin",
                              src = main_rs,
@@ -466,10 +381,10 @@ def _rust_binary_impl(ctx):
       ctx.files.data +
       depinfo.libs +
       depinfo.transitive_libs +
-      [ctx.file._rustc] +
-      ctx.files._rustc_lib +
-      ctx.files._rust_lib +
-      ctx.files._crosstool)
+      [toolchain.rustc] +
+      toolchain.rustc_lib +
+      toolchain.rust_lib +
+      toolchain.crosstool_files)
 
   if ctx.file.out_dir_tar:
     compile_inputs = compile_inputs + [ctx.file.out_dir_tar]
@@ -483,9 +398,14 @@ def _rust_binary_impl(ctx):
       progress_message = ("Compiling Rust binary %s (%d files)"
                           % (ctx.label.name, len(ctx.files.srcs))))
 
+  runfiles = ctx.runfiles(
+      files = depinfo.transitive_dylibs.to_list() + ctx.files.data,
+      collect_data = True)
+
   return struct(rust_srcs = ctx.files.srcs,
                 crate_root = main_rs,
-                rust_deps = ctx.attr.deps)
+                rust_deps = ctx.attr.deps,
+                runfiles = runfiles)
 
 def _rust_test_common(ctx, test_binary):
   """Builds a Rust test binary.
@@ -522,7 +442,9 @@ def _rust_test_common(ctx, test_binary):
                         allow_cc_deps=True,
                         out_dir_tar=ctx.file.out_dir_tar)
 
-  cmd = _build_rustc_command(ctx = ctx,
+  toolchain = _find_toolchain(ctx)
+  cmd = build_rustc_command(ctx = ctx,
+                             toolchain = toolchain,
                              crate_name = test_binary.basename,
                              crate_type = target.crate_type,
                              src = target.crate_root,
@@ -531,12 +453,13 @@ def _rust_test_common(ctx, test_binary):
                              rust_flags = ["--test"])
 
   compile_inputs = (target.srcs +
+                    ctx.files.data +
                     depinfo.libs +
                     depinfo.transitive_libs +
-                    [ctx.file._rustc] +
-                    ctx.files._rustc_lib +
-                    ctx.files._rust_lib +
-                    ctx.files._crosstool)
+                    [toolchain.rustc] +
+                    toolchain.rustc_lib +
+                    toolchain.rust_lib +
+                    toolchain.crosstool_files)
 
   if ctx.file.out_dir_tar:
     compile_inputs = compile_inputs + [ctx.file.out_dir_tar]
@@ -549,19 +472,26 @@ def _rust_test_common(ctx, test_binary):
       use_default_shell_env = True,
       progress_message = ("Compiling Rust test %s (%d files)"
                           % (ctx.label.name, len(target.srcs))))
+  return depinfo
 
 def _rust_test_impl(ctx):
   """
   Implementation for rust_test Skylark rule.
   """
-  _rust_test_common(ctx, ctx.outputs.executable)
+  depinfo = _rust_test_common(ctx, ctx.outputs.executable)
+
+  runfiles = ctx.runfiles(
+      files = depinfo.transitive_dylibs.to_list() + ctx.files.data,
+      collect_data = True)
+
+  return struct(runfiles = runfiles)
 
 def _rust_bench_test_impl(ctx):
   """Implementation for the rust_bench_test Skylark rule."""
   rust_bench_test = ctx.outputs.executable
   test_binary = ctx.new_file(ctx.configuration.bin_dir,
                              "%s_bin" % rust_bench_test.basename)
-  _rust_test_common(ctx, test_binary)
+  depinfo = _rust_test_common(ctx, test_binary)
 
   ctx.file_action(
       output = rust_bench_test,
@@ -571,7 +501,10 @@ def _rust_bench_test_impl(ctx):
           "%s --bench\n" % test_binary.short_path]),
       executable = True)
 
-  runfiles = ctx.runfiles(files = [test_binary], collect_data = True)
+  runfiles = ctx.runfiles(
+      files = depinfo.transitive_dylibs.to_list() + [test_binary],
+      collect_data = True)
+
   return struct(runfiles = runfiles)
 
 def _build_rustdoc_flags(ctx):
@@ -608,49 +541,21 @@ def _rust_doc_impl(ctx):
                         target.deps,
                         target.name,
                         output_dir,
-                        allow_cc_deps=False,
-                        out_dir_tar=ctx.file.out_dir_tar)
+                        allow_cc_deps=False)
 
   # Rustdoc flags.
   doc_flags = _build_rustdoc_flags(ctx)
 
   # Build rustdoc command.
-  toolchain = _rust_toolchain(ctx)
-  docs_dir = rust_doc_zip.dirname + "/_rust_docs"
-  doc_cmd = " ".join(
-      ["set -e;"] +
-      depinfo.setup_cmd + [
-          "rm -rf %s;" % docs_dir,
-          "mkdir %s;" % docs_dir,
-          "LD_LIBRARY_PATH=%s" % toolchain.rustc_lib_path,
-          "DYLD_LIBRARY_PATH=%s" % toolchain.rustc_lib_path,
-          " ".join(depinfo.env_vars),
-          toolchain.rustdoc_path,
-          lib_rs.path,
-          "--crate-name %s" % target.name,
-          "-L all=%s" % toolchain.rust_lib_path,
-          "-o %s" % docs_dir,
-      ] +
-      doc_flags +
-      depinfo.search_flags +
-      depinfo.link_flags + [
-          "&&",
-          "(cd %s" % docs_dir,
-          "&&",
-          ZIP_PATH,
-          "-qR",
-          rust_doc_zip.basename,
-          "$(find . -type f) )",
-          "&&",
-          "mv %s/%s %s" % (docs_dir, rust_doc_zip.basename, rust_doc_zip.path),
-      ])
+  toolchain = _find_toolchain(ctx)
+  doc_cmd = build_rustdoc_command(ctx, toolchain, rust_doc_zip, depinfo, lib_rs, target, doc_flags)
 
   # Rustdoc action
   rustdoc_inputs = (target.srcs +
                     depinfo.libs +
-                    [ctx.file._rustdoc] +
-                    ctx.files._rustc_lib +
-                    ctx.files._rust_lib)
+                    [toolchain.rust_doc] +
+                    toolchain.rustc_lib +
+                    toolchain.rust_lib)
 
   ctx.action(
       inputs = rustdoc_inputs,
@@ -682,27 +587,13 @@ def _rust_doc_test_impl(ctx):
                         target.name,
                         working_dir=".",
                         allow_cc_deps=False,
-                        in_runfiles=True,
-                        out_dir_tar=ctx.file.out_dir_tar)
+                        in_runfiles=True)
 
 
   # Construct rustdoc test command, which will be written to a shell script
   # to be executed to run the test.
-  toolchain = _rust_toolchain(ctx)
-  doc_test_cmd = " ".join(
-      ["#!/usr/bin/env bash\n"] +
-      ["set -e\n"] +
-      depinfo.setup_cmd +
-      [
-          "LD_LIBRARY_PATH=%s" % toolchain.rustc_lib_short_path,
-          "DYLD_LIBRARY_PATH=%s" % toolchain.rustc_lib_short_path,
-          " ".join(depinfo.env_vars),
-          toolchain.rustdoc_short_path,
-          "-L all=%s" % toolchain.rust_lib_short_path,
-          lib_rs.path,
-      ] +
-      depinfo.search_flags +
-      depinfo.link_flags)
+  toolchain = _find_toolchain(ctx)
+  doc_test_cmd = build_rustdoc_test_command(ctx, toolchain, depinfo, lib_rs)
 
   ctx.file_action(output = rust_doc_test,
                   content = doc_test_cmd,
@@ -711,9 +602,9 @@ def _rust_doc_test_impl(ctx):
   doc_test_inputs = (target.srcs +
                      depinfo.libs +
                      depinfo.transitive_libs +
-                     [ctx.file._rustdoc] +
-                     ctx.files._rustc_lib +
-                     ctx.files._rust_lib)
+                    [toolchain.rust_doc] +
+                    toolchain.rustc_lib +
+                    toolchain.rust_lib)
 
   runfiles = ctx.runfiles(files = doc_test_inputs, collect_data = True)
   return struct(runfiles = runfiles)
@@ -740,30 +631,6 @@ _rust_common_attrs = {
     ),
 }
 
-_rust_toolchain_attrs = {
-    "_rustc": attr.label(
-        default = Label("//rust:rustc"),
-        executable = True,
-        cfg = "host",
-        single_file = True,
-    ),
-    "_rustc_lib": attr.label(
-        default = Label("//rust:rustc_lib"),
-    ),
-    "_rust_lib": attr.label(
-        default = Label("//rust:rust_lib"),
-    ),
-    "_rustdoc": attr.label(
-        default = Label("//rust:rustdoc"),
-        executable = True,
-        cfg = "host",
-        single_file = True,
-    ),
-    "_crosstool": attr.label(
-        default = Label("//tools/defaults:crosstool"),
-    ),
-}
-
 _rust_library_attrs = {
     "crate_type": attr.string(),
     "platform": attr.string(),
@@ -772,10 +639,10 @@ _rust_library_attrs = {
 rust_library = rule(
     _rust_library_impl,
     attrs = dict(_rust_common_attrs.items() +
-                 _rust_library_attrs.items() +
-                 _rust_toolchain_attrs.items()),
-    fragments = ["cpp"],
+                 _rust_library_attrs.items()),
+    host_fragments = ["cpp"],
     outputs = _get_crate_type_and_target_outputs,
+    toolchains = ["@io_bazel_rules_rust//rust:toolchain"],
 )
 
 """Builds a Rust library crate.
@@ -878,9 +745,10 @@ Example:
 
 rust_binary = rule(
     _rust_binary_impl,
-    attrs = dict(_rust_common_attrs.items() + _rust_toolchain_attrs.items()),
+    attrs = _rust_common_attrs,
     executable = True,
-    fragments = ["cpp"],
+    host_fragments = ["cpp"],
+    toolchains = ["@io_bazel_rules_rust//rust:toolchain"],
 )
 
 """Builds a Rust binary crate.
@@ -1002,10 +870,11 @@ Example:
 
 rust_test = rule(
     _rust_test_impl,
-    attrs = dict(_rust_common_attrs.items() + _rust_toolchain_attrs.items()),
+    attrs = _rust_common_attrs,
     executable = True,
-    fragments = ["cpp"],
+    host_fragments = ["cpp"],
     test = True,
+    toolchains = ["@io_bazel_rules_rust//rust:toolchain"],
 )
 
 """Builds a Rust test crate.
@@ -1165,10 +1034,11 @@ Examples:
 
 rust_bench_test = rule(
     _rust_bench_test_impl,
-    attrs = dict(_rust_common_attrs.items() + _rust_toolchain_attrs.items()),
+    attrs = _rust_common_attrs,
     executable = True,
-    fragments = ["cpp"],
+    host_fragments = ["cpp"],
     test = True,
+    toolchains = ["@io_bazel_rules_rust//rust:toolchain"],
 )
 
 """Builds a Rust benchmark test.
@@ -1298,11 +1168,11 @@ _rust_doc_attrs = {
 rust_doc = rule(
     _rust_doc_impl,
     attrs = dict(_rust_doc_common_attrs.items() +
-                 _rust_doc_attrs.items() +
-                 _rust_toolchain_attrs.items()),
+                 _rust_doc_attrs.items()),
     outputs = {
         "rust_doc_zip": "%{name}-docs.zip",
     },
+    toolchains = ["@io_bazel_rules_rust//rust:toolchain"],
 )
 
 """Generates code documentation.
@@ -1358,10 +1228,10 @@ Example:
 
 rust_doc_test = rule(
     _rust_doc_test_impl,
-    attrs = dict(_rust_doc_common_attrs.items() +
-                 _rust_toolchain_attrs.items()),
+    attrs = _rust_doc_common_attrs,
     executable = True,
     test = True,
+    toolchains = ["@io_bazel_rules_rust//rust:toolchain"],
 )
 
 """Runs Rust documentation tests.
